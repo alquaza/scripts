@@ -1,10 +1,12 @@
 #!/bin/bash
 # Posture Reminder for macOS
 #
-# Shows a pop-up after every hour of continuous use, telling you to get up
-# or shift position. The pop-up stays until you click it and has a
-# "Stop for today" button. Runs quietly in the background: no Dock or
-# menu bar icon, and it starts again automatically each time you log in.
+# Shows a pop-up every hour while the laptop is awake, telling you to get up
+# or shift position. It never shows while the screensaver is on, and the
+# hour starts over when the laptop wakes from sleep or the screensaver ends.
+# The pop-up stays until you click it and has a "Stop for today" button.
+# Runs quietly in the background: no Dock or menu bar icon, and it starts
+# again automatically each time you log in.
 #
 #   Install:    bash install-posture-reminder.sh
 #   Test it:    bash install-posture-reminder.sh test
@@ -49,9 +51,8 @@ mkdir -p "$APP_DIR" "$HOME/Library/LaunchAgents"
 cat > "$SCRIPT" <<'SCRIPT_EOF'
 #!/bin/bash
 # --- Settings you can change --------------------------------------------
-INTERVAL=3600   # seconds of continuous use before a reminder (3600 = 1 hour)
-BREAK=300       # seconds away from the laptop that count as a break (5 min)
-MESSAGE="STAND UP OR STRETCH"
+INTERVAL=3600   # seconds between reminders (3600 = 1 hour)
+MESSAGE="STAND UP, FIX POSTURE, OR STRETCH"
 # ------------------------------------------------------------------------
 
 STATE="$HOME/Library/Application Support/PostureReminder"
@@ -77,22 +78,24 @@ if [ "$(cat "$STATE/stopped_on" 2>/dev/null)" = "$today" ]; then
   exit 0
 fi
 
-# Seconds since the last keyboard/mouse/trackpad input.
-idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
-idle=${idle:-0}
-
 last_check=$(cat "$STATE/last_check" 2>/dev/null || echo 0)
 start=$(cat "$STATE/use_started" 2>/dev/null || echo "$now")
 echo "$now" > "$STATE/last_check"
 
-# A break restarts the hour: you were idle a while, or the laptop was
-# asleep or closed (no check has run for a while).
-if [ "$idle" -ge "$BREAK" ] || [ $((now - last_check)) -ge "$BREAK" ]; then
+# Screensaver on: no pop-up, and the hour starts over once it ends.
+if pgrep -x ScreenSaverEngine >/dev/null; then
   echo "$now" > "$STATE/use_started"
   exit 0
 fi
 
-# Not an hour of use yet.
+# Just woke from sleep (no check has run for a few minutes, though one
+# runs every minute while awake): start the hour over.
+if [ $((now - last_check)) -ge 180 ]; then
+  echo "$now" > "$STATE/use_started"
+  exit 0
+fi
+
+# Not an hour yet.
 if [ $((now - start)) -lt "$INTERVAL" ]; then
   echo "$start" > "$STATE/use_started"
   exit 0
@@ -140,6 +143,6 @@ PLIST_EOF
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 
-echo "Posture Reminder installed. You'll get a pop-up after each hour of use."
+echo "Posture Reminder installed. You'll get a pop-up every hour while the laptop is awake."
 echo "Preview the pop-up:  bash \"$0\" test"
 echo "Remove it:           bash \"$0\" uninstall"
